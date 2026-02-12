@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Cartes
 import { AlertTriangle, CheckCircle, Clock, Mail, Zap, Bell, ChevronDown, ChevronRight, ExternalLink, Target, Shield, Inbox, AlertCircle, Timer, BarChart3, Settings, Activity, Search, RefreshCw, Layers, GitBranch, Info, BookOpen, Wifi, WifiOff } from "lucide-react";
 
 const REFRESH_MS = 60000;
+const API_URL = "https://script.google.com/a/macros/octopuslegacy.com/s/AKfycbwAhIes4NexCCzDBs86faN4Me7kAIFtMcX4y50697hUhksFg_90zHTpSpyvRKo3UL12/exec";
 
 const FALLBACK = [
   {threadId:"19c4c57e",inboundTimestamp:"2026-02-11T10:55:49Z",subject:"Post",fromName:"Rebecca Wallace",fromEmail:"rebecca@evastore.co.uk",category:"post_dispatch",categoryLabel:"📦 Post / Dispatch",priority:"P1",urgency:"high",type:"Action",status:"OPEN",samReplyTimestamp:null,responseTimeBizHours:null,slaDeadline:"2026-02-12T10:55:00Z",escalationLevel:"DM",gmailLink:"https://mail.google.com/mail/u/0/#inbox/19c4c57e"},
@@ -31,8 +32,16 @@ function getMonth(iso){if(!iso)return"";const d=new Date(iso);return d.getFullYe
 
 function computeMetrics(threads,mk){
   const all=threads.filter(t=>getMonth(t.inboundTimestamp)===mk);
-  const action=all.filter(t=>t.type==="Action");
-  const excluded=all.filter(t=>t.type!=="Action");
+  // Determine action vs excluded: if type contains "action" OR status implies action (REPLIED/OPEN/BREACH), it's an action thread
+  // Only FYI/excluded if: type contains "fyi" or "excl", OR status is AUTO-ACKED/EXCLUDED, OR category is weekly_roundup/system
+  const isAction=t=>{
+    const tp=(t.type||"").toLowerCase(),st=(t.status||"").toUpperCase(),cat=(t.category||"").toLowerCase();
+    if(tp.includes("fyi")||tp.includes("excl")||st.includes("AUTO-ACKED")||st==="EXCLUDED"||cat==="weekly_roundup"||cat==="system_auto")return false;
+    if(tp.includes("action")||st.includes("REPLIED")||st.includes("BREACH")||st==="OPEN")return true;
+    return tp!==""&&!tp.includes("fyi"); // default: if type exists and isn't fyi, treat as action
+  };
+  const action=all.filter(isAction);
+  const excluded=all.filter(t=>!isAction(t));
   const st=s=>(s||"").toUpperCase();
   const replied=action.filter(t=>st(t.status).includes("REPLIED")&&!st(t.status).includes("LATE"));
   const late=action.filter(t=>st(t.status).includes("LATE"));
@@ -85,7 +94,9 @@ function Tile({icon:Icon,label,value,sub,color="#a1a1aa"}){
 
 // ═══ TRIAGE ROW ═══
 function TriageRow({t,expanded,onToggle}){
-  const s=(t.status||"").toUpperCase(),isOpen=s==="OPEN",isBreach=s.includes("BREACH")||s.includes("LATE"),isExcl=t.type!=="Action";
+  const s=(t.status||"").toUpperCase(),isOpen=s==="OPEN",isBreach=s.includes("BREACH")||s.includes("LATE");
+  const tp=(t.type||"").toLowerCase(),cat=(t.category||"").toLowerCase();
+  const isExcl=tp.includes("fyi")||tp.includes("excl")||s.includes("AUTO-ACKED")||s==="EXCLUDED"||cat==="weekly_roundup"||cat==="system_auto";
   const border=isOpen?"border-amber-500/30":isBreach?"border-red-500/20":"border-zinc-800/60";
   const bg=isOpen?"bg-amber-500/[0.03]":isBreach?"bg-red-500/[0.02]":"bg-zinc-900/30";
   const label=t.categoryLabel||t.category||"📧 General";
@@ -227,7 +238,7 @@ export default function App(){
   const[isLive,setIsLive]=useState(false);
   const[lastFetch,setLastFetch]=useState(null);
   const[fetchErr,setFetchErr]=useState(null);
-  const[apiUrl,setApiUrl]=useState(()=>{try{return window.localStorage?.getItem("evastore_api_url")||""}catch{return""}});
+  const[apiUrl,setApiUrl]=useState(API_URL);
 
   const fetchData=useCallback(async()=>{
     if(!apiUrl)return;
@@ -254,7 +265,7 @@ export default function App(){
     if(filter==="open")list=list.filter(t=>u(t.status)==="OPEN");
     if(filter==="replied")list=list.filter(t=>u(t.status).includes("REPLIED")||u(t.status).includes("AUTO"));
     if(filter==="breached")list=list.filter(t=>u(t.status).includes("BREACH")||u(t.status).includes("LATE"));
-    if(filter==="action")list=list.filter(t=>t.type==="Action"&&u(t.status)==="OPEN");
+    if(filter==="action")list=list.filter(t=>{const st=u(t.status),tp=(t.type||"").toLowerCase();return st==="OPEN"&&!tp.includes("fyi")&&!tp.includes("excl")});
     if(searchQ){const q=searchQ.toLowerCase();list=list.filter(t=>(t.subject||"").toLowerCase().includes(q)||(t.fromName||"").toLowerCase().includes(q))}
     return list.sort((a,b)=>new Date(b.inboundTimestamp)-new Date(a.inboundTimestamp));
   },[threads,month,filter,searchQ]);
